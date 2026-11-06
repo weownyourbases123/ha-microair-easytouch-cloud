@@ -1,1 +1,16 @@
-{"codeowners":["@weownyourbases123"],"config_flow":true,"documentation":"https://github.com/weownyourbases123/ha-microair-easytouch-cloud","domain":"microair_cloud","iot_class":"cloud_polling","issue_tracker":"https://github.com/weownyourbases123/ha-microair-easytouch-cloud/issues","name":"Micro-Air EasyTouch (Cloud)","requirements":["boto3>=1.35.0,<2","paho-mqtt>=2.0,<3"],"version":"0.2.0"}
+{
+  "domain": "microair_cloud",
+  "name": "Micro-Air EasyTouch (Cloud)",
+  "codeowners": [
+    "@weownyourbases123"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/weownyourbases123/ha-microair-easytouch-cloud",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/weownyourbases123/ha-microair-easytouch-cloud/issues",
+  "requirements": [
+    "boto3>=1.35.0,<2",
+    "paho-mqtt>=2.0,<3"
+  ],
+  "version": "0.2.0"
+}
