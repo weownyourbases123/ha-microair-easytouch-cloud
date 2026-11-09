@@ -5,7 +5,8 @@ Owns everything long-lived for one config entry:
 - Cognito tokens (refreshed, or re-created by sign-in when needed) --
   only used to mint a certificate if none is stored; day-to-day
   polling talks MQTT with the certificate and needs no tokens at all
-- one persistent MQTT connection, polled with 'Get Status' every 60 s
+- one persistent MQTT connection, polled with 'Get Status' on the
+  interval from the config entry's options (default every 60 s)
 
 Passwords, tokens and private keys are never logged.
 """
@@ -18,6 +19,7 @@ import json
 import logging
 import os
 import time
+from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -31,9 +33,9 @@ from .const import (
     CONF_SIGNIN_LABEL,
     CONF_TOPIC,
     DOMAIN,
-    POLL_INTERVAL,
     STATUS_WAIT_SECONDS,
     STORAGE_VERSION,
+    poll_interval_seconds,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,11 +55,12 @@ class MicroAirCloudCoordinator(DataUpdateCoordinator):
     """Coordinate cloud polling for one EasyTouch thermostat."""
 
     def __init__(self, hass: HomeAssistant, entry) -> None:
+        self.poll_seconds = poll_interval_seconds(entry.options)
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=POLL_INTERVAL,
+            update_interval=timedelta(seconds=self.poll_seconds),
             config_entry=entry,
         )
         self.entry = entry
@@ -157,6 +160,19 @@ class MicroAirCloudCoordinator(DataUpdateCoordinator):
     @property
     def mqtt_connected(self) -> bool:
         return bool(self._link and self._link.connected)
+
+    def apply_options(self) -> None:
+        """Re-read the entry's options and apply them live.
+
+        Called from the config-entry update listener when the user
+        saves the options flow, so a new poll interval takes effect
+        without a reload or restart.
+        """
+        seconds = poll_interval_seconds(self.entry.options)
+        if seconds != self.poll_seconds:
+            self.poll_seconds = seconds
+            self.update_interval = timedelta(seconds=seconds)
+            _LOGGER.info("Status poll interval set to %d s", seconds)
 
     # -- controls ----------------------------------------------------------------
     async def _wait_connected(self) -> bool:

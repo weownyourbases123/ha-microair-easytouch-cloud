@@ -21,8 +21,13 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -35,12 +40,18 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_EMAIL,
     CONF_FEDERATION_LABEL,
+    CONF_OPTION_DEBUG_LOGGING,
+    CONF_OPTION_POLL_INTERVAL,
     CONF_PASSWORD,
     CONF_SERIAL,
     CONF_SIGNIN_LABEL,
     CONF_TOPIC,
     DOMAIN,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
     STORAGE_VERSION,
+    debug_logging_enabled,
+    poll_interval_seconds,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,6 +86,14 @@ class MicroAirCloudConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Micro-Air EasyTouch (Cloud)."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> MicroAirOptionsFlow:
+        """Return the options flow handler."""
+        return MicroAirOptionsFlow()
 
     def __init__(self) -> None:
         self._pending: dict[str, Any] = {}
@@ -142,7 +161,10 @@ class MicroAirCloudConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_finish(self, device: dict) -> ConfigFlowResult:
         serial = device["serial"]
         await self.async_set_unique_id(serial)
-        self._abort_if_unique_id_configured()
+        # reload_on_update=False: this flow passes no updates, and the
+        # default (True) combined with the entry's update listener is
+        # deprecated since HA 2026.6 and a hard error in 2026.12.
+        self._abort_if_unique_id_configured(reload_on_update=False)
         topic = f"{device['control_type']} {serial}"
         # The canonical (registered-case) email is what the thermostat
         # expects in status requests and what the entry stores; the
@@ -203,3 +225,49 @@ class MicroAirCloudConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_FEDERATION_LABEL: self._pending[CONF_FEDERATION_LABEL],
             },
         )
+
+
+class MicroAirOptionsFlow(OptionsFlow):
+    """Options for one Micro-Air EasyTouch (Cloud) entry.
+
+    Both settings apply live when saved (the integration registers an
+    update listener; no reload or restart): the poll interval is handed
+    to the coordinator, and debug logging flips this integration's log
+    level. Defaults shown here are the *effective* current values, so
+    opening the page and saving without changes is a no-op.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_OPTION_POLL_INTERVAL: int(
+                        user_input[CONF_OPTION_POLL_INTERVAL]
+                    ),
+                    CONF_OPTION_DEBUG_LOGGING: bool(
+                        user_input[CONF_OPTION_DEBUG_LOGGING]
+                    ),
+                }
+            )
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_OPTION_POLL_INTERVAL,
+                    default=poll_interval_seconds(self.config_entry.options),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=MIN_POLL_INTERVAL_SECONDS,
+                        max=MAX_POLL_INTERVAL_SECONDS,
+                        step=5,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_OPTION_DEBUG_LOGGING,
+                    default=debug_logging_enabled(self.config_entry.options),
+                ): BooleanSelector(),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

@@ -90,6 +90,8 @@ class MicroAirClimate(CoordinatorEntity, ClimateEntity):
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         | ClimateEntityFeature.FAN_MODE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
     )
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_min_temp = 40
@@ -181,10 +183,19 @@ class MicroAirClimate(CoordinatorEntity, ClimateEntity):
 
     # -- controls --------------------------------------------------------------
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        current_raw = self._data.get("mode")
+        # Only expect a power confirmation when the thermostat's status
+        # actually reports power (some models omit PRM; expecting a key
+        # that always reads None could never confirm).
+        power_known = self._data.get("system_power") is not None
         if hvac_mode == HVACMode.OFF:
-            raw = 0
-        elif hvac_mode == HVACMode.FAN_ONLY:
+            # Power is a separate channel from mode on this thermostat:
+            # the app's power button sends "power" alone and leaves the
+            # device's mode untouched, so OFF does the same (no mode 0).
+            expect = {"system_power": False} if power_known else {}
+            await self.coordinator.async_send_change({"power": 0}, expect)
+            return
+        current_raw = self._data.get("mode")
+        if hvac_mode == HVACMode.FAN_ONLY:
             raw = 1
         elif hvac_mode == HVACMode.COOL:
             raw = 2
@@ -196,7 +207,31 @@ class MicroAirClimate(CoordinatorEntity, ClimateEntity):
             raw = current_raw if current_raw in _AUTO_FAMILY else _DEFAULT_AUTO_MODE
         else:
             return
-        await self.coordinator.async_send_change({"mode": raw}, {"mode": raw})
+        # A mode Change alone does nothing while the unit is powered
+        # off (power and mode are separate in the status), so turning a
+        # mode on must carry power with it.
+        expect = {"mode": raw}
+        if power_known:
+            expect["system_power"] = True
+        await self.coordinator.async_send_change(
+            {"power": 1, "mode": raw}, expect
+        )
+
+    async def async_turn_off(self) -> None:
+        await self.async_set_hvac_mode(HVACMode.OFF)
+
+    async def async_turn_on(self) -> None:
+        # Restore the mode the thermostat's status still holds (power
+        # off leaves it untouched). Raw mode 0 maps to OFF, which is no
+        # use as a turn-on target, so it takes the fallback too.
+        mode = _MODE_TO_HVAC.get(self._data.get("mode"))
+        if mode is None or mode == HVACMode.OFF:
+            mode = (
+                HVACMode.HEAT_COOL
+                if HVACMode.HEAT_COOL in self.hvac_modes
+                else HVACMode.HEAT
+            )
+        await self.async_set_hvac_mode(mode)
 
     async def async_set_temperature(self, **kwargs) -> None:
         if kwargs.get("hvac_mode") is not None:
@@ -221,6 +256,11 @@ class MicroAirClimate(CoordinatorEntity, ClimateEntity):
             await self.coordinator.async_send_change(changes, expect)
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
+        if self._data.get("system_power") is False:
+            # Don't write a fan-speed register to a powered-off unit;
+            # v0.2.0 no-oped in the off state (its OFF zeroed the mode,
+            # which had no fan key), so keep that behavior.
+            return
         raw_mode = self._data.get("mode")
         key = protocol.FAN_CHANGE_KEY.get(raw_mode)
         if key is None:

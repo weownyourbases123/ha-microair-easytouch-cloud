@@ -85,6 +85,37 @@ def federation_attempts(signin_pool: dict) -> list[dict]:
 POLL_INTERVAL = timedelta(seconds=60)
 STATUS_WAIT_SECONDS = 25  # max wait for a thermostat status reply per poll
 
+# --- User options (config entry options, set from the options flow) --------
+
+CONF_OPTION_POLL_INTERVAL = "poll_interval_seconds"
+CONF_OPTION_DEBUG_LOGGING = "debug_logging"
+
+DEFAULT_POLL_INTERVAL_SECONDS = 60
+MIN_POLL_INTERVAL_SECONDS = 30
+MAX_POLL_INTERVAL_SECONDS = 600
+
+
+def poll_interval_seconds(options: dict | None) -> int:
+    """Effective poll interval (seconds) for a config entry's options.
+
+    Falls back to the default for missing/invalid values and clamps to
+    [MIN, MAX]: the cloud round trip is not free, and a runaway value
+    must never starve or flood the thermostat's topic.
+    """
+    raw = (options or {}).get(CONF_OPTION_POLL_INTERVAL)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: int(float("inf")) — a non-finite stored value
+        # must fall back to the default, not raise (Round 2, Finding 8).
+        return DEFAULT_POLL_INTERVAL_SECONDS
+    return max(MIN_POLL_INTERVAL_SECONDS, min(MAX_POLL_INTERVAL_SECONDS, value))
+
+
+def debug_logging_enabled(options: dict | None) -> bool:
+    """Whether the debug-logging option is on for a config entry."""
+    return bool((options or {}).get(CONF_OPTION_DEBUG_LOGGING, False))
+
 STORAGE_VERSION = 1
 
 # Config-entry data keys
